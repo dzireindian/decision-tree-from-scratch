@@ -8,6 +8,7 @@ import numpy as np
 import math
 import pprint
 import pandas as pd
+from operator import itemgetter
 
 #Class for implementing decision trees
 class decision_tree :
@@ -87,15 +88,25 @@ class decision_tree :
         if gain != None:
             print('gain :',round(dty.get('gain'),2))
 
+    # Function to print details of each node in the tree levelwise
+    def level_print(self):
+        self.level_nodes = sorted(self.level_nodes, key=itemgetter('level'))
+
+        dup_levels = self.level_nodes.copy()
+
+        while dup_levels != []:
+            node = dup_levels.pop(0)
+            self.dict_print(node)
+
+
     #Function to buid tree which is implemented using dictionary
-    def buildTree(self,df,out,cols,l=0,printer=False,tree={}):
+    def buildTree(self,df,out,cols,l=0,tree={}):
         # Checking there are no columns to split upon,if yes then insert this node as leaf node into dictionary 'tree'
         if len(cols) == 0:
             tree['leaf'] = True
             tree['feature'] = "Reached leaf node"
             tree['level'] = l
             tree['entropy'] = 0.0
-            # dfc = df.copy()
             df['out'] = out.copy()
             tree['count'] = df['out'].value_counts().to_dict()
             uni = df['out'].unique()
@@ -105,8 +116,7 @@ class decision_tree :
             else:
                 tree['out'] = list(uni)
 
-            if printer:
-                self.dict_print(tree)
+            self.level_nodes.append(tree.copy())
 
             return
 
@@ -122,8 +132,7 @@ class decision_tree :
             tree['out'] = df['out'].unique()[0]
             tree['count'] = df['out'].value_counts().to_dict()
 
-            if printer:
-                self.dict_print(tree)
+            self.level_nodes.append(tree.copy())
 
             return
 
@@ -132,8 +141,8 @@ class decision_tree :
             # Assigning tree with the details of the feature with maximum gain
             tree[node] = {'gain':df['gain/'+node].unique()[0],'feature':node,'entropy':df['ent/'+node].unique()[0],'level':l,'count':df['out'].value_counts().to_dict(),'leaf':False}
             tree['leaf'] = False
-            if printer:
-                self.dict_print(tree[node])
+
+            self.level_nodes.append(tree[node].copy())
 
             cols = set(cols).difference(set([node]))
             l += 1
@@ -143,16 +152,13 @@ class decision_tree :
                 subtable = self.get_subtable(df, node, f)
                 columns = subtable.columns.values
 
-                if printer:
-                    self.buildTree(subtable[columns[:4]], subtable[columns[4]], list(cols), l=l, tree=tree[node][f],printer=True)
-                else:
-                    self.buildTree(subtable[columns[:4]].copy(),subtable[columns[4]].copy(),list(cols),l=l,tree=tree[node][f])
+                self.buildTree(subtable[columns[:4]].copy(), subtable[columns[4]].copy(), list(cols), l=l, tree=tree[node][f])
 
         #return the final tree
         return tree
 
     #Function to filter and train data for building the tree
-    def fit(self,df,out,printer=False):
+    def fit(self,df,out):
         #Calling the filter function
         df = self.filter(df)
         #Conversion to make sure any numeric column index of the dataframe are converted to string
@@ -162,27 +168,32 @@ class decision_tree :
         #repalcing the column indicies of the dataframe with the converted column indicies
         df.columns = columns
 
-        if printer:
-            self.root = self.buildTree(df, out, columns,printer=True)
-        else:
-            self.root = self.buildTree(df, out, columns)
+        # List to strore the each node of the tree while building a tree
+        self.level_nodes = []
 
-        print()
-
-        return self.root
+        self.root = self.buildTree(df, out, columns)
 
     #Function to visualize the decision tree dictionary
     def pretty_print(self):
         pprint.pprint(self.root)
 
     #Function to label the numeric data into some unique values
-    def label(self,val):
-        #Uses throttle value in the class variable 'boundaries' to label the entered numeric data
-        if (val < self.boundaries[0]):
+    def label(self,val,feature):
+        #selecting the throttle values of the specified feature to label the numeric data as unique values
+        boundaries = []
+        for i in range(len(self.boundaries)):
+            b = self.boundaries[i]
+            key = list(b.keys())[0]
+            if key == feature:
+                boundaries = b[feature]
+                break
+        
+        #labelling the data as unique value based on the selected throttle values
+        if (val < boundaries[0]):
             return 'a'
-        elif (val < self.boundaries[1]):
+        elif (val < boundaries[1]):
             return 'b'
-        elif (val < self.boundaries[2]):
+        elif (val < boundaries[2]):
             return 'c'
         else:
             return 'd'
@@ -194,21 +205,20 @@ class decision_tree :
         first = (minimum + second) / 2
         maximum = df[old_feature_name].max()
         third = (maximum + second) / 2
+        
+        #store the throttle value of each feature in the form of list of dictionaries
+        d = {old_feature_name:[first,second,third]}
+        self.boundaries.append(d)
 
-        #setting the throttle values to label the numeric data as list of elements in the class variable 'booundaries'
-        self.boundaries = []
-        self.boundaries.append(first)
-        self.boundaries.append(second)
-        self.boundaries.append(third)
-
-        return df[old_feature_name].apply(lambda x: self.label(x))
+        return df[old_feature_name].apply(lambda x: self.label(x,old_feature_name))
 
     #Function to find and convert columns with numeric datatypes to uniquely labeled values
     def filter(self,df):
         #Finding the datatypes present in each column and storing it as dictionary...
         #where column index is the key and datatype pesent in the column as value and storing it as class variable
         self.column_types = dict(df.dtypes)
-
+        # list to store throttle values of each feature in the form of list of dictionaries
+        self.boundaries = []
         for d in self.column_types.keys():
             if self.column_types[d] == float or self.column_types[d] == int:
                 df[d] = self.toLabel(df.copy(),d)
@@ -219,7 +229,7 @@ class decision_tree :
     def filter_target(self,dty):
         for d in dty.keys():
             if type(dty[d]) == int or type(dty[d]) == float:
-                dty[d] = self.label(dty[d])
+                dty[d] = self.label(dty[d],d)
 
         return dty
 
@@ -239,12 +249,13 @@ class decision_tree :
                 present = False
                 break
 
-        # Calling filter_target function to convert any numeric class in the dictionary to labelled data to get prediction
-        dty = self.filter_target(dty)
-
         # If all the features entered by the user is present in the then start traversing through the tree to predict the final output...
         # else display the error message
         if present:
+
+            # Calling filter_target function to convert any numeric class in the dictionary to labelled data to get prediction
+            dty = self.filter_target(dty)
+
             while nroot.get('leaf') == False:
                 key = set(list(nroot.keys())).intersection(set(cols))
                 key = list(key)[0]
@@ -285,14 +296,18 @@ def test():
     # Initializing decision tree
     dtree = decision_tree()
     #Training the decision tree for the iris data
-    tree = dtree.fit(data.copy(),target,printer=True)
+    dtree.fit(data.copy(),target)
+    #Printing the nodes of the tree levelwise by calling level print function
+    dtree.level_print()
     #input values for predicting the output
-    d = {'sepal_length':1.5,'sepal_width':1.2,'petal_length':1.2,'petal_width':1.3}
+    d = {'sepal_length':1.5,'sepal_width':2.2,'petal_length':3.2,'petal_width':1.3}
     # Input for predicting the output
+    print()
     print("Input for predicting output :",d)
     #Predicted output for the given input dictionary
     pred = dtree.predict(d)
     #Printing the predicted output
+    print()
     print("Predicted Output:",pred)
 
 #Calling the test function
